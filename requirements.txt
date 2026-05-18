@@ -1,0 +1,13 @@
+# Core dependencies
+opencv-python==4.8.1.78
+ultralytics==8.0.208
+RPi.GPIO==0.7.0
+
+# Optional but recommended
+numpy==1.24.3
+Pillow==10.0.0
+
+# For development/testing
+pytest==7.4.2
+black==23.9.1
+flake8==6.1.0
