@@ -1,0 +1,13 @@
+# Raspberry Pi Dependencies
+# Install with: pip install -r requirements-pi.txt
+
+# Core dependencies
+opencv-python==4.8.1.78
+ultralytics==8.0.208
+RPi.GPIO==0.7.0
+numpy==1.24.3
+Pillow==10.0.0
+
+# Optional but recommended
+requests==2.31.0
+python-dotenv==1.0.0
