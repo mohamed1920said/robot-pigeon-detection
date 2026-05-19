@@ -203,13 +203,21 @@ class Robot:
             return False
     
     def _setup_camera(self) -> bool:
-        """Setup camera"""
+        """Setup camera using config camera index"""
         try:
-            self.camera = cv2.VideoCapture(0)
+            # Try configured camera index first (Pi 5 uses 19+)
+            camera_index = config.CAMERA_INDEX
+            self.logger.info(f"Trying camera index {camera_index}...")
+            self.camera = cv2.VideoCapture(camera_index)
             
             if not self.camera.isOpened():
-                self.logger.warning("⚠️  Camera not found")
-                return False
+                # Try index 0 as fallback
+                self.logger.warning(f"Camera index {camera_index} failed, trying index 0...")
+                self.camera = cv2.VideoCapture(0)
+                
+                if not self.camera.isOpened():
+                    self.logger.warning("⚠️  No camera found at indices 0 or {camera_index}")
+                    return False
             
             self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
             self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
