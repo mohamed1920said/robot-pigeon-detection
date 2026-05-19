@@ -3,6 +3,7 @@
 """
 Clean Pigeon Detection Robot for Raspberry Pi 5
 Production-ready with graceful GPIO fallback
+Updated with Camera Handler support
 """
 
 import time
@@ -33,6 +34,7 @@ except (ImportError, RuntimeError):
     print("⚠️  GPIO not available (normal on Pi 5 without proper setup)")
 
 import config
+from camera_handler import CameraHandler
 
 # ===========================
 # LOGGER SETUP
@@ -86,6 +88,7 @@ class RobotStats:
     pigeons_detected: int = 0
     obstacles_detected: int = 0
     errors: int = 0
+    camera_type: str = "unknown"
     
     def __post_init__(self):
         if self.start_time is None:
@@ -100,6 +103,7 @@ class RobotStats:
         return f"""
 Robot Statistics:
 - Runtime: {self.runtime()}s
+- Camera: {self.camera_type}
 - Frames: {self.frames_processed}
 - Pigeons Detected: {self.pigeons_detected}
 - Obstacles: {self.obstacles_detected}
@@ -117,7 +121,7 @@ class Robot:
         self.stats = RobotStats()
         self.running = False
         self.model = None
-        self.camera = None
+        self.camera_handler = None
         self.pwm_motors = {}
         self.gpio_enabled = False
         
@@ -203,28 +207,19 @@ class Robot:
             return False
     
     def _setup_camera(self) -> bool:
-        """Setup camera using config camera index"""
+        """Setup camera using CameraHandler"""
         try:
-            # Try configured camera index first (Pi 5 uses 19+)
-            camera_index = config.CAMERA_INDEX
-            self.logger.info(f"Trying camera index {camera_index}...")
-            self.camera = cv2.VideoCapture(camera_index)
+            self.logger.info(f"Setting up camera: {config.CAMERA_TYPE}")
             
-            if not self.camera.isOpened():
-                # Try index 0 as fallback
-                self.logger.warning(f"Camera index {camera_index} failed, trying index 0...")
-                self.camera = cv2.VideoCapture(0)
-                
-                if not self.camera.isOpened():
-                    self.logger.warning("⚠️  No camera found at indices 0 or {camera_index}")
-                    return False
+            self.camera_handler = CameraHandler()
             
-            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
-            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
-            self.camera.set(cv2.CAP_PROP_FPS, config.CAMERA_FPS)
-            
-            self.logger.info("✅ Camera ready")
-            return True
+            if self.camera_handler.connect():
+                self.stats.camera_type = config.CAMERA_TYPE
+                self.logger.info(f"✅ Camera ready: {config.CAMERA_TYPE}")
+                return True
+            else:
+                self.logger.warning("⚠️  Camera setup failed, will run in image mode")
+                return False
             
         except Exception as e:
             self.logger.warning(f"⚠️  Camera setup failed: {e}")
@@ -342,12 +337,12 @@ class Robot:
     
     def detect_pigeons(self):
         """Detect pigeons"""
-        if not self.camera:
+        if not self.camera_handler:
             return False
         
         try:
-            ret, frame = self.camera.read()
-            if not ret:
+            ret, frame = self.camera_handler.read()
+            if not ret or frame is None:
                 return False
             
             self.stats.frames_processed += 1
@@ -405,8 +400,8 @@ class Robot:
         try:
             self.stop()
             
-            if self.camera:
-                self.camera.release()
+            if self.camera_handler:
+                self.camera_handler.release()
             
             for pwm in self.pwm_motors.values():
                 pwm.stop()
