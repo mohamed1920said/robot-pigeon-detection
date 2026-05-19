@@ -1,17 +1,114 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Universal Camera Handler
-Supports: iPhone (HTTP), Xiaomi HTTP, Xiaomi RTSP, USB, Local Pi Camera, Test Mode
+iPhone HTTP MJPEG Camera Handler
+Direct HTTP streaming without OpenCV VideoCapture
 """
 
 import cv2
 import logging
 import time
+import threading
+import requests
 from typing import Tuple, Optional
 import numpy as np
+from io import BytesIO
 
 logger = logging.getLogger(__name__)
+
+
+class MJPEGStreamReader:
+    """Read MJPEG stream directly from HTTP"""
+    
+    def __init__(self, url: str, timeout: int = 5):
+        self.url = url
+        self.timeout = timeout
+        self.stream = None
+        self.frame = None
+        self.lock = threading.Lock()
+        self.running = False
+        self.thread = None
+    
+    def connect(self) -> bool:
+        """Connect to MJPEG stream"""
+        try:
+            logger.info(f"Connecting to MJPEG stream: {self.url}")
+            
+            self.stream = requests.get(
+                self.url,
+                stream=True,
+                timeout=self.timeout,
+                verify=False
+            )
+            
+            if self.stream.status_code != 200:
+                logger.error(f"HTTP {self.stream.status_code}")
+                return False
+            
+            self.running = True
+            self.thread = threading.Thread(target=self._read_stream, daemon=True)
+            self.thread.start()
+            
+            # Wait for first frame
+            for _ in range(10):
+                if self.frame is not None:
+                    logger.info("✅ MJPEG stream connected")
+                    return True
+                time.sleep(0.1)
+            
+            logger.warning("Timeout waiting for first frame")
+            self.running = False
+            return False
+            
+        except Exception as e:
+            logger.error(f"Connection failed: {e}")
+            return False
+    
+    def _read_stream(self):
+        """Read MJPEG stream in background thread"""
+        try:
+            bytes_data = b''
+            
+            for chunk in self.stream.iter_content(chunk_size=1024):
+                if not self.running:
+                    break
+                
+                bytes_data += chunk
+                
+                # Find JPEG frame boundaries
+                a = bytes_data.find(b'\xff\xd8')
+                b = bytes_data.find(b'\xff\xd9')
+                
+                if a != -1 and b != -1:
+                    jpg_data = bytes_data[a:b+2]
+                    bytes_data = bytes_data[b+2:]
+                    
+                    # Decode JPEG
+                    frame = cv2.imdecode(np.frombuffer(jpg_data, dtype=np.uint8), cv2.IMREAD_COLOR)
+                    
+                    if frame is not None:
+                        with self.lock:
+                            self.frame = frame
+        
+        except Exception as e:
+            logger.error(f"Stream read error: {e}")
+        finally:
+            self.running = False
+    
+    def read(self) -> Tuple[bool, Optional[np.ndarray]]:
+        """Get latest frame"""
+        with self.lock:
+            if self.frame is not None:
+                return True, self.frame.copy()
+        return False, None
+    
+    def release(self):
+        """Stop stream"""
+        self.running = False
+        if self.stream:
+            self.stream.close()
+        if self.thread:
+            self.thread.join(timeout=2)
 
 
 class CameraHandler:
@@ -29,6 +126,7 @@ class CameraHandler:
         
         self.camera_type = camera_type or config.CAMERA_TYPE
         self.camera = None
+        self.mjpeg_reader = None
         self.is_connected = False
         self.reconnect_attempts = 0
         self.max_reconnect_attempts = 3
@@ -56,11 +154,11 @@ class CameraHandler:
             return False
     
     def _connect_xiaomi_http(self) -> bool:
-        """Connect to Xiaomi camera via HTTP MJPEG"""
+        """Connect to Xiaomi/iPhone camera via HTTP MJPEG"""
         try:
             import config
             
-            # Try multiple URL formats for iPhone streaming and Xiaomi
+            # Try multiple URL formats
             urls = [
                 # iPhone streaming (primary)
                 f"http://{config.XIAOMI_CAMERA_IP}:{config.XIAOMI_CAMERA_PORT}/video",
@@ -74,23 +172,26 @@ class CameraHandler:
             ]
             
             for url in urls:
-                logger.info(f"Connecting to HTTP: {url}")
+                logger.info(f"Trying HTTP MJPEG: {url}")
                 
-                self.camera = cv2.VideoCapture(url)
-                
-                if not self.camera.isOpened():
-                    logger.debug(f"Failed to open: {url}")
-                    continue
-                
-                # Try to read a frame
-                ret, frame = self.camera.read()
-                if ret:
-                    logger.info(f"✅ Connected to HTTP: {url}")
+                # Try direct HTTP MJPEG stream
+                reader = MJPEGStreamReader(url, timeout=5)
+                if reader.connect():
+                    logger.info(f"✅ Connected to HTTP MJPEG: {url}")
+                    self.mjpeg_reader = reader
                     self.is_connected = True
                     return True
-                else:
-                    logger.debug(f"Failed to read frame from: {url}")
-                    self.camera.release()
+                
+                # Try OpenCV VideoCapture as fallback
+                camera = cv2.VideoCapture(url)
+                if camera.isOpened():
+                    ret, frame = camera.read()
+                    if ret:
+                        logger.info(f"✅ Connected via OpenCV: {url}")
+                        self.camera = camera
+                        self.is_connected = True
+                        return True
+                    camera.release()
             
             logger.warning("Failed to connect to any HTTP URL")
             return False
@@ -115,20 +216,15 @@ class CameraHandler:
                 
                 self.camera = cv2.VideoCapture(url)
                 
-                if not self.camera.isOpened():
-                    logger.debug(f"Failed to open: {url}")
-                    continue
-                
-                # Try to read a frame with timeout
-                self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                ret, frame = self.camera.read()
-                
-                if ret:
-                    logger.info(f"✅ Connected to RTSP: {url}")
-                    self.is_connected = True
-                    return True
-                else:
-                    logger.debug(f"Failed to read frame from: {url}")
+                if self.camera.isOpened():
+                    self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    ret, frame = self.camera.read()
+                    
+                    if ret:
+                        logger.info(f"✅ Connected to RTSP: {url}")
+                        self.is_connected = True
+                        return True
+                    
                     self.camera.release()
             
             logger.warning("Failed to connect to any RTSP URL")
@@ -180,7 +276,6 @@ class CameraHandler:
                     if ret:
                         logger.info(f"✅ Local camera connected at index {index}")
                         
-                        # Set properties
                         camera.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
                         camera.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
                         camera.set(cv2.CAP_PROP_FPS, config.CAMERA_FPS)
@@ -199,11 +294,10 @@ class CameraHandler:
             return False
     
     def _connect_test(self) -> bool:
-        """Connect to test mode (generates test frames)"""
+        """Connect to test mode"""
         try:
             logger.info("Test mode: Using generated test frames")
             
-            # Create a simple test image
             self.test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
             cv2.putText(self.test_frame, "TEST MODE", (200, 240),
                        cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 2)
@@ -216,42 +310,35 @@ class CameraHandler:
             return False
     
     def read(self) -> Tuple[bool, Optional[np.ndarray]]:
-        """
-        Read a frame from camera
-        
-        Returns:
-            Tuple of (success, frame)
-        """
+        """Read a frame from camera"""
         if not self.is_connected:
             return False, None
         
         try:
             if self.camera_type == "test":
-                # Return test frame with frame counter
                 frame = self.test_frame.copy()
                 timestamp = int(time.time() * 1000) % 10000
                 cv2.putText(frame, f"Frame: {timestamp}", (200, 400),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 return True, frame
-            else:
+            
+            elif self.mjpeg_reader:
+                return self.mjpeg_reader.read()
+            
+            elif self.camera:
                 ret, frame = self.camera.read()
                 
-                if not ret:
-                    # Attempt reconnect
-                    if self.reconnect_attempts < self.max_reconnect_attempts:
-                        logger.warning(f"Read failed, attempting reconnect ({self.reconnect_attempts+1}/{self.max_reconnect_attempts})")
-                        self.reconnect_attempts += 1
-                        time.sleep(1)
-                        
-                        if self.connect():
-                            self.reconnect_attempts = 0
-                            return self.read()
-                    else:
-                        logger.error("Max reconnection attempts reached")
-                        self.is_connected = False
+                if not ret and self.reconnect_attempts < self.max_reconnect_attempts:
+                    logger.warning(f"Read failed, reconnecting...")
+                    self.reconnect_attempts += 1
+                    time.sleep(1)
+                    
+                    if self.connect():
+                        self.reconnect_attempts = 0
+                        return self.read()
                 
                 return ret, frame
-                
+        
         except Exception as e:
             logger.error(f"Read error: {e}")
             return False, None
@@ -259,6 +346,8 @@ class CameraHandler:
     def release(self):
         """Release camera resources"""
         try:
+            if self.mjpeg_reader:
+                self.mjpeg_reader.release()
             if self.camera:
                 self.camera.release()
             self.is_connected = False
