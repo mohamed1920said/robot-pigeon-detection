@@ -1,16 +1,29 @@
 # -*- coding: utf-8 -*-
 """
-Robot Configuration File
+Robot Configuration File - Raspberry Pi 5
 Centralized settings for easy tuning
 """
+
+from pathlib import Path
+
+# ===========================
+# PROJECT PATHS (Relative)
+# ===========================
+PROJECT_DIR = Path(__file__).parent
+MODELS_DIR = PROJECT_DIR / "models"
+LOGS_DIR = PROJECT_DIR / "logs"
+
+# Create directories if they don't exist
+MODELS_DIR.mkdir(exist_ok=True)
+LOGS_DIR.mkdir(exist_ok=True)
 
 # ===========================
 # MODEL SETTINGS
 # ===========================
-MODEL_PATH = "/home/mehdi/robot_pigeon/best_int8.tflite"
-IMAGE_SIZE = 320
-CONFIDENCE_THRESHOLD = 0.4
-MIN_DETECTION_COOLDOWN = 30  # seconds between alerts for same detection
+MODEL_PATH = str(MODELS_DIR / "best.pt")  # PyTorch model
+IMAGE_SIZE = 640
+CONFIDENCE_THRESHOLD = 0.5
+MIN_DETECTION_COOLDOWN = 30  # seconds between alerts
 
 # ===========================
 # MOTOR SETTINGS
@@ -33,11 +46,11 @@ ULTRASONIC_TIMEOUT = 0.05  # seconds
 IR_SENSOR_DEBOUNCE = 20  # milliseconds
 
 # ===========================
-# GPIO PIN CONFIGURATION
+# GPIO PIN CONFIGURATION (Raspberry Pi 5)
 # ===========================
 # Ultrasonic Sensor
-TRIG_FRONT = 5
-ECHO_FRONT = 6
+TRIG_FRONT = 16
+ECHO_FRONT = 26
 
 # IR Line Sensors
 IR_LEFT = 17
@@ -52,29 +65,29 @@ L_L_EN = 25
 
 # Right Motor
 R_RPWM = 12
-R_LPWM = 16
-R_R_EN = 20
-R_L_EN = 21
+R_LPWM = 13
+R_R_EN = 6
+R_L_EN = 5
 
 # Buzzer
-BUZZER = 26
+BUZZER = 19
 
 # ===========================
-# EMAIL SETTINGS
+# EMAIL SETTINGS (Optional)
 # ===========================
-OWNER_EMAIL = "mohamedamir28860292@gmail.com"
-SENDER_EMAIL = "mohamedamir28860292@gmail.com"
-SENDER_PASSWORD = "your_app_password_here"  # Use Gmail App Password
+OWNER_EMAIL = "your-email@gmail.com"
+SENDER_EMAIL = "your-email@gmail.com"
+SENDER_PASSWORD = "your-app-password"  # Use Gmail App Password
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
-EMAIL_RATE_LIMIT = 60  # seconds between similar alerts
-ENABLE_EMAIL_ALERTS = True
+EMAIL_RATE_LIMIT = 60  # seconds between alerts
+ENABLE_EMAIL_ALERTS = False
 
 # ===========================
 # LOGGING SETTINGS
 # ===========================
-LOG_FILE = "/home/mehdi/robot_pigeon/robot.log"
+LOG_FILE = str(LOGS_DIR / "robot.log")
 LOG_LEVEL = "INFO"  # DEBUG, INFO, WARNING, ERROR
 LOG_MAX_BYTES = 5 * 1024 * 1024  # 5MB
 LOG_BACKUP_COUNT = 5
@@ -90,6 +103,7 @@ WATCHDOG_TIMEOUT = 30  # seconds
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 CAMERA_FPS = 30
+CAMERA_INDEX = 0
 
 # ===========================
 # OPERATION MODES
@@ -101,3 +115,19 @@ OPERATION_MODES = {
     "TEST": "Hardware testing mode"
 }
 DEFAULT_MODE = "AUTO"
+
+# ===========================
+# DEBUG MODE
+# ===========================
+DEBUG_MODE = False
+VERBOSE = True
+
+# ===========================
+# VERIFICATION
+# ===========================
+if __name__ == "__main__":
+    print(f"✅ Config loaded from: {PROJECT_DIR}")
+    print(f"📁 Models: {MODELS_DIR}")
+    print(f"📁 Logs: {LOGS_DIR}")
+    print(f"📦 Model: {MODEL_PATH}")
+    print(f"📝 Log: {LOG_FILE}")
