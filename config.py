@@ -31,8 +31,8 @@ MIN_DETECTION_COOLDOWN = 30  # seconds between alerts
 CAMERA_TYPE = "xiaomi_http"  # Options: "xiaomi_http", "xiaomi_rtsp", "usb", "local", "test"
 
 # Xiaomi Camera Configuration
-XIAOMI_CAMERA_IP = "192.168.1.46"
-XIAOMI_CAMERA_PORT = 8080  # HTTP port
+XIAOMI_CAMERA_IP = "192.168.1.47"
+XIAOMI_CAMERA_PORT = 4747  # HTTP port
 XIAOMI_CAMERA_TIMEOUT = 5  # seconds
 
 # Local Camera Settings
