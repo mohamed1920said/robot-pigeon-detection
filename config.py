@@ -26,6 +26,22 @@ CONFIDENCE_THRESHOLD = 0.5
 MIN_DETECTION_COOLDOWN = 30  # seconds between alerts
 
 # ===========================
+# CAMERA SETTINGS
+# ===========================
+CAMERA_TYPE = "xiaomi_http"  # Options: "xiaomi_http", "xiaomi_rtsp", "usb", "local", "test"
+
+# Xiaomi Camera Configuration
+XIAOMI_CAMERA_IP = "192.168.1.46"
+XIAOMI_CAMERA_PORT = 8080  # HTTP port
+XIAOMI_CAMERA_TIMEOUT = 5  # seconds
+
+# Local Camera Settings
+CAMERA_WIDTH = 640
+CAMERA_HEIGHT = 480
+CAMERA_FPS = 30
+CAMERA_INDEX = 19  # Pi 5 uses higher indices (try 19-35 if not working)
+
+# ===========================
 # MOTOR SETTINGS
 # ===========================
 BASE_SPEED = 15
@@ -99,12 +115,6 @@ MAX_RUNTIME = 3600  # seconds (0 = unlimited)
 ENABLE_WATCHDOG = True
 WATCHDOG_TIMEOUT = 30  # seconds
 
-# Camera Settings
-CAMERA_WIDTH = 640
-CAMERA_HEIGHT = 480
-CAMERA_FPS = 30
-CAMERA_INDEX = 19  # Pi 5 uses higher indices (try 19-35 if not working)
-
 # ===========================
 # OPERATION MODES
 # ===========================
@@ -131,4 +141,5 @@ if __name__ == "__main__":
     print(f"📁 Logs: {LOGS_DIR}")
     print(f"📦 Model: {MODEL_PATH}")
     print(f"📝 Log: {LOG_FILE}")
-    print(f"📷 Camera Index: {CAMERA_INDEX}")
+    print(f"📷 Camera Type: {CAMERA_TYPE}")
+    print(f"📷 Xiaomi IP: {XIAOMI_CAMERA_IP}:{XIAOMI_CAMERA_PORT}")
