@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Clean Pigeon Detection Robot for Raspberry Pi
-Production-ready with proper error handling and logging
+Clean Pigeon Detection Robot for Raspberry Pi 5
+Production-ready with graceful GPIO fallback
 """
 
 import time
@@ -15,7 +15,6 @@ from dataclasses import dataclass
 
 try:
     import cv2
-    import RPi.GPIO as GPIO
     from ultralytics import YOLO
     import smtplib
     from email.mime.text import MIMEText
@@ -24,6 +23,14 @@ except ImportError as e:
     print(f"Import Error: {e}")
     print("Install dependencies with: pip install -r requirements-pi.txt")
     sys.exit(1)
+
+# Try GPIO - graceful fallback for Pi 5
+try:
+    import RPi.GPIO as GPIO
+    GPIO_AVAILABLE = True
+except (ImportError, RuntimeError):
+    GPIO_AVAILABLE = False
+    print("⚠️  GPIO not available (normal on Pi 5 without proper setup)")
 
 import config
 
@@ -112,23 +119,27 @@ class Robot:
         self.model = None
         self.camera = None
         self.pwm_motors = {}
+        self.gpio_enabled = False
         
         self.logger.info("Robot initialized")
     
     def setup(self) -> bool:
         """Setup all hardware and model"""
         try:
-            # GPIO setup
-            if not self._setup_gpio():
-                return False
+            # GPIO setup (optional)
+            if GPIO_AVAILABLE:
+                if not self._setup_gpio():
+                    self.logger.warning("GPIO setup skipped, continuing in simulation mode")
+            else:
+                self.logger.warning("GPIO not available, running in simulation mode")
             
-            # Model loading
+            # Model loading (required)
             if not self._load_model():
                 return False
             
-            # Camera setup
+            # Camera setup (optional)
             if not self._setup_camera():
-                return False
+                self.logger.warning("Camera not available, running detection on static images")
             
             self.logger.info("All systems ready")
             return True
@@ -173,21 +184,22 @@ class Robot:
             for pwm in self.pwm_motors.values():
                 pwm.start(0)
             
+            self.gpio_enabled = True
             self.logger.info("GPIO setup complete")
             return True
             
         except Exception as e:
-            self.logger.error(f"GPIO setup failed: {e}")
+            self.logger.warning(f"GPIO setup failed (simulation mode): {e}")
             return False
     
     def _load_model(self) -> bool:
         """Load YOLO model"""
         try:
             self.model = YOLO(config.MODEL_PATH, task="detect")
-            self.logger.info(f"Model loaded: {config.MODEL_PATH}")
+            self.logger.info(f"✅ Model loaded: {config.MODEL_PATH}")
             return True
         except Exception as e:
-            self.logger.error(f"Model loading failed: {e}")
+            self.logger.error(f"❌ Model loading failed: {e}")
             return False
     
     def _setup_camera(self) -> bool:
@@ -196,22 +208,25 @@ class Robot:
             self.camera = cv2.VideoCapture(0)
             
             if not self.camera.isOpened():
-                self.logger.error("Camera not found")
+                self.logger.warning("⚠️  Camera not found")
                 return False
             
             self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
             self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
             self.camera.set(cv2.CAP_PROP_FPS, config.CAMERA_FPS)
             
-            self.logger.info("Camera ready")
+            self.logger.info("✅ Camera ready")
             return True
             
         except Exception as e:
-            self.logger.error(f"Camera setup failed: {e}")
+            self.logger.warning(f"⚠️  Camera setup failed: {e}")
             return False
     
     def read_sensors(self):
         """Read line sensors"""
+        if not self.gpio_enabled:
+            return (0, 0, 0)  # Simulate no line detected
+        
         try:
             left = GPIO.input(config.IR_LEFT)
             center = GPIO.input(config.IR_CENTER)
@@ -224,6 +239,9 @@ class Robot:
     
     def measure_distance(self) -> float:
         """Measure distance"""
+        if not self.gpio_enabled:
+            return 999  # Simulate no obstacle
+        
         try:
             GPIO.output(config.TRIG_FRONT, True)
             time.sleep(0.00001)
@@ -247,6 +265,9 @@ class Robot:
     
     def set_motors(self, left: int, right: int):
         """Set motor speeds (-100 to 100)"""
+        if not self.gpio_enabled:
+            return  # Simulation mode
+        
         try:
             left = max(-100, min(100, left))
             right = max(-100, min(100, right))
@@ -277,6 +298,9 @@ class Robot:
     
     def beep(self):
         """Buzzer beep"""
+        if not self.gpio_enabled:
+            return
+        
         try:
             GPIO.output(config.BUZZER, GPIO.HIGH)
             time.sleep(0.2)
@@ -307,11 +331,12 @@ class Robot:
             self.set_motors(config.BASE_SPEED, -config.BASE_SPEED // 2)
         else:
             self.stop()
-            self.logger.warning("Line lost")
-            self.stats.obstacles_detected += 1
     
     def detect_pigeons(self):
         """Detect pigeons"""
+        if not self.camera:
+            return False
+        
         try:
             ret, frame = self.camera.read()
             if not ret:
@@ -332,7 +357,7 @@ class Robot:
                 self.stats.pigeons_detected += 1
                 confidences = results[0].boxes.conf.cpu().numpy()
                 avg_confidence = float(confidences.mean())
-                self.logger.info(f"🕊️  Pigeons detected: {num_detections}, avg confidence: {avg_confidence:.1%}")
+                self.logger.info(f"🕊️  Pigeons detected: {num_detections}, confidence: {avg_confidence:.1%}")
                 return True
             
             return False
@@ -345,7 +370,7 @@ class Robot:
     def run(self):
         """Main robot loop"""
         self.running = True
-        self.logger.info("Robot started")
+        self.logger.info("🤖 Robot started")
         
         try:
             while self.running:
@@ -358,7 +383,7 @@ class Robot:
                 time.sleep(0.01)
                 
         except KeyboardInterrupt:
-            self.logger.info("Interrupted")
+            self.logger.info("Interrupted by user")
         except Exception as e:
             self.logger.error(f"Runtime error: {e}")
             self.stats.errors += 1
@@ -378,7 +403,8 @@ class Robot:
             for pwm in self.pwm_motors.values():
                 pwm.stop()
             
-            GPIO.cleanup()
+            if self.gpio_enabled:
+                GPIO.cleanup()
             
             self.logger.info(self.stats.summary())
             
@@ -401,7 +427,7 @@ def main():
     
     # Setup
     if not robot.setup():
-        logger.error("Setup failed")
+        logger.error("❌ Setup failed - model not available")
         return False
     
     # Run
