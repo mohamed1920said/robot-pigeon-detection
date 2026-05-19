@@ -103,7 +103,7 @@ WATCHDOG_TIMEOUT = 30  # seconds
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 CAMERA_FPS = 30
-CAMERA_INDEX = 0
+CAMERA_INDEX = 19  # Pi 5 uses higher indices (try 19-35 if not working)
 
 # ===========================
 # OPERATION MODES
@@ -131,3 +131,4 @@ if __name__ == "__main__":
     print(f"📁 Logs: {LOGS_DIR}")
     print(f"📦 Model: {MODEL_PATH}")
     print(f"📝 Log: {LOG_FILE}")
+    print(f"📷 Camera Index: {CAMERA_INDEX}")
