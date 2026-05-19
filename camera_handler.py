@@ -50,7 +50,7 @@ class MJPEGStreamReader:
             self.thread.start()
             
             # Wait for first frame
-            for _ in range(10):
+            for _ in range(50):  # 5 second timeout
                 if self.frame is not None:
                     logger.info("✅ MJPEG stream connected")
                     return True
@@ -69,7 +69,7 @@ class MJPEGStreamReader:
         try:
             bytes_data = b''
             
-            for chunk in self.stream.iter_content(chunk_size=1024):
+            for chunk in self.stream.iter_content(chunk_size=4096):
                 if not self.running:
                     break
                 
@@ -158,17 +158,16 @@ class CameraHandler:
         try:
             import config
             
-            # Try multiple URL formats
+            # Primary: Try localhost proxy first
             urls = [
-                # iPhone streaming (primary)
-                f"http://{config.XIAOMI_CAMERA_IP}:{config.XIAOMI_CAMERA_PORT}/video",
+                f"http://{config.XIAOMI_CAMERA_IP}:{config.XIAOMI_CAMERA_PORT}/stream",
                 f"http://{config.XIAOMI_CAMERA_IP}:{config.XIAOMI_CAMERA_PORT}",
                 
-                # Xiaomi camera URLs
+                # Fallback: Direct iPhone/Xiaomi camera
+                f"http://192.168.1.47:4747/video",
+                f"http://{config.XIAOMI_CAMERA_IP}:{config.XIAOMI_CAMERA_PORT}/video",
                 f"http://{config.XIAOMI_CAMERA_IP}:{config.XIAOMI_CAMERA_PORT}/mjpg/video.mjpg",
                 f"http://{config.XIAOMI_CAMERA_IP}:8080/mjpg/video.mjpg",
-                f"http://{config.XIAOMI_CAMERA_IP}:8888/mjpg/video.mjpg",
-                f"http://{config.XIAOMI_CAMERA_IP}:8080/video",
             ]
             
             for url in urls:
@@ -181,17 +180,6 @@ class CameraHandler:
                     self.mjpeg_reader = reader
                     self.is_connected = True
                     return True
-                
-                # Try OpenCV VideoCapture as fallback
-                camera = cv2.VideoCapture(url)
-                if camera.isOpened():
-                    ret, frame = camera.read()
-                    if ret:
-                        logger.info(f"✅ Connected via OpenCV: {url}")
-                        self.camera = camera
-                        self.is_connected = True
-                        return True
-                    camera.release()
             
             logger.warning("Failed to connect to any HTTP URL")
             return False
