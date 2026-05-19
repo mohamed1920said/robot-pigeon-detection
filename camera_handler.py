@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Universal Camera Handler
-Supports: Xiaomi HTTP, Xiaomi RTSP, USB, Local Pi Camera, Test Mode
+Supports: iPhone (HTTP), Xiaomi HTTP, Xiaomi RTSP, USB, Local Pi Camera, Test Mode
 """
 
 import cv2
@@ -60,43 +60,43 @@ class CameraHandler:
         try:
             import config
             
-            url = f"http://{config.XIAOMI_CAMERA_IP}:{config.XIAOMI_CAMERA_PORT}/mjpg/video.mjpg"
-            
-            logger.info(f"Connecting to Xiaomi HTTP: {url}")
-            
-            self.camera = cv2.VideoCapture(url)
-            
-            if not self.camera.isOpened():
-                logger.warning(f"Failed to open HTTP URL: {url}")
+            # Try multiple URL formats for iPhone streaming and Xiaomi
+            urls = [
+                # iPhone streaming (primary)
+                f"http://{config.XIAOMI_CAMERA_IP}:{config.XIAOMI_CAMERA_PORT}/video",
+                f"http://{config.XIAOMI_CAMERA_IP}:{config.XIAOMI_CAMERA_PORT}",
                 
-                # Try alternative URLs
-                alternative_urls = [
-                    f"http://{config.XIAOMI_CAMERA_IP}:{config.XIAOMI_CAMERA_PORT}/video",
-                    f"http://{config.XIAOMI_CAMERA_IP}:8888/mjpg/video.mjpg",
-                ]
-                
-                for alt_url in alternative_urls:
-                    logger.info(f"Trying alternative: {alt_url}")
-                    self.camera = cv2.VideoCapture(alt_url)
-                    if self.camera.isOpened():
-                        logger.info(f"✅ Connected via: {alt_url}")
-                        self.is_connected = True
-                        return True
-                
-                return False
+                # Xiaomi camera URLs
+                f"http://{config.XIAOMI_CAMERA_IP}:{config.XIAOMI_CAMERA_PORT}/mjpg/video.mjpg",
+                f"http://{config.XIAOMI_CAMERA_IP}:8080/mjpg/video.mjpg",
+                f"http://{config.XIAOMI_CAMERA_IP}:8888/mjpg/video.mjpg",
+                f"http://{config.XIAOMI_CAMERA_IP}:8080/video",
+            ]
             
-            # Try to read a frame
-            ret, frame = self.camera.read()
-            if not ret:
-                logger.warning("Failed to read first frame from HTTP")
-                return False
+            for url in urls:
+                logger.info(f"Connecting to HTTP: {url}")
+                
+                self.camera = cv2.VideoCapture(url)
+                
+                if not self.camera.isOpened():
+                    logger.debug(f"Failed to open: {url}")
+                    continue
+                
+                # Try to read a frame
+                ret, frame = self.camera.read()
+                if ret:
+                    logger.info(f"✅ Connected to HTTP: {url}")
+                    self.is_connected = True
+                    return True
+                else:
+                    logger.debug(f"Failed to read frame from: {url}")
+                    self.camera.release()
             
-            logger.info(f"✅ Connected to Xiaomi HTTP: {url}")
-            self.is_connected = True
-            return True
+            logger.warning("Failed to connect to any HTTP URL")
+            return False
             
         except Exception as e:
-            logger.error(f"Xiaomi HTTP connection error: {e}")
+            logger.error(f"HTTP connection error: {e}")
             return False
     
     def _connect_xiaomi_rtsp(self) -> bool:
@@ -116,7 +116,7 @@ class CameraHandler:
                 self.camera = cv2.VideoCapture(url)
                 
                 if not self.camera.isOpened():
-                    logger.warning(f"Failed to open: {url}")
+                    logger.debug(f"Failed to open: {url}")
                     continue
                 
                 # Try to read a frame with timeout
@@ -124,17 +124,18 @@ class CameraHandler:
                 ret, frame = self.camera.read()
                 
                 if ret:
-                    logger.info(f"✅ Connected to Xiaomi RTSP: {url}")
+                    logger.info(f"✅ Connected to RTSP: {url}")
                     self.is_connected = True
                     return True
                 else:
-                    logger.warning(f"Failed to read frame from: {url}")
+                    logger.debug(f"Failed to read frame from: {url}")
                     self.camera.release()
             
+            logger.warning("Failed to connect to any RTSP URL")
             return False
             
         except Exception as e:
-            logger.error(f"Xiaomi RTSP connection error: {e}")
+            logger.error(f"RTSP connection error: {e}")
             return False
     
     def _connect_usb(self) -> bool:
