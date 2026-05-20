@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Raspberry Pi 5 Compatible GPIO Wrapper
-Handles GPIO operations for Pi 5 using libgpiod instead of RPi.GPIO
+Handles GPIO operations for Pi 5 using libgpiod (gpiochip0)
 """
 
 import os
@@ -31,7 +31,7 @@ except ImportError:
 
 
 class GPIO_Pi5:
-    """Pi 5 compatible GPIO wrapper"""
+    """Pi 5 compatible GPIO wrapper using gpiod"""
     
     BCM = 1
     OUT = 1
@@ -48,8 +48,9 @@ class GPIO_Pi5:
         """Set GPIO mode (BCM)"""
         try:
             if GPIO_BACKEND == "gpiod":
-                self.chip = gpiod.Chip("gpiochip4")  # Pi 5 uses gpiochip4
-                logger.info("✅ GPIO initialized (libgpiod)")
+                # Pi 5 uses gpiochip0
+                self.chip = gpiod.Chip("gpiochip0")
+                logger.info("✅ GPIO initialized with gpiochip0 (Pi 5)")
             else:
                 import RPi.GPIO as GPIO
                 GPIO.setmode(GPIO.BCM)
@@ -82,8 +83,14 @@ class GPIO_Pi5:
         """Write to GPIO pin"""
         try:
             if GPIO_BACKEND == "gpiod":
-                if pin in self.pins:
-                    self.pins[pin].set_value(value)
+                if isinstance(pin, list):
+                    # Handle list of pins
+                    for p in pin:
+                        if p in self.pins:
+                            self.pins[p].set_value(value)
+                else:
+                    if pin in self.pins:
+                        self.pins[pin].set_value(value)
             else:
                 import RPi.GPIO as GPIO
                 GPIO.output(pin, value)
@@ -121,6 +128,8 @@ class GPIO_Pi5:
         try:
             if GPIO_BACKEND == "gpiod":
                 if pins:
+                    if not isinstance(pins, list):
+                        pins = [pins]
                     for pin in pins:
                         if pin in self.pins:
                             self.pins[pin].release()
@@ -177,3 +186,4 @@ if GPIO_BACKEND == "RPi.GPIO":
 
 if __name__ == "__main__":
     print(f"✅ GPIO wrapper loaded - Backend: {GPIO_BACKEND}")
+    print(f"✅ Using gpiochip0 for Pi 5 compatibility")
