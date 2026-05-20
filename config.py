@@ -35,9 +35,9 @@ DROIDCAM_IP = "192.168.1.47"
 DROIDCAM_PORT = 4747
 DROIDCAM_TIMEOUT = 5  # seconds
 
-# Camera URL for DroidCam
-# MJPEG: http://192.168.1.47:4747/mjpegfeed?type=base64
-DROIDCAM_URL = f"http://{DROIDCAM_IP}:{DROIDCAM_PORT}/mjpegfeed?type=base64"
+# Camera URL for DroidCam - CORRECT ENDPOINT: /video
+# Returns: multipart/x-mixed-replace with MJPEG stream
+DROIDCAM_URL = f"http://{DROIDCAM_IP}:{DROIDCAM_PORT}/video"
 
 # Local Camera Settings (backup)
 CAMERA_WIDTH = 640
