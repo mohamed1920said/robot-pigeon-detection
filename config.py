@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Robot Configuration File - Raspberry Pi 5
+Robot Configuration File - Raspberry Pi 5 with Arduino
 Centralized settings for easy tuning
 """
 
@@ -42,14 +42,21 @@ CAMERA_FPS = 30
 CAMERA_INDEX = 19  # Pi 5 uses higher indices (try 19-35 if not working)
 
 # ===========================
-# MOTOR SETTINGS
+# ARDUINO SETTINGS
 # ===========================
-BASE_SPEED = 15
-MAX_SPEED = 100
-ACCELERATION_RATE = 5  # PWM units per cycle
+ARDUINO_PORT = "/dev/ttyUSB0"  # Linux/Mac: /dev/ttyUSB0, Windows: COM3
+ARDUINO_BAUD = 115200
+
+# ===========================
+# MOTOR SETTINGS (via Arduino)
+# ===========================
+BASE_SPEED = 200  # 0-255
+MAX_SPEED = 255
+MIN_SPEED = 50
+ACCELERATION_RATE = 5
 DECELERATION_RATE = 8
 
-# TIMING
+# Motor timing
 MOVEMENT_TIME = 3  # seconds
 STOP_TIME = 5  # seconds
 SMOOTH_TRANSITION_TIME = 0.1  # seconds
@@ -57,36 +64,47 @@ SMOOTH_TRANSITION_TIME = 0.1  # seconds
 # ===========================
 # SENSOR SETTINGS
 # ===========================
-OBSTACLE_DISTANCE_THRESHOLD = 20  # cm
-ULTRASONIC_TIMEOUT = 0.05  # seconds
+OBSTACLE_THRESHOLD = 20.0  # cm - obstacle detection threshold
+ULTRASONIC_TIMEOUT = 0.03  # 30ms
 IR_SENSOR_DEBOUNCE = 20  # milliseconds
 
 # ===========================
-# GPIO PIN CONFIGURATION (Raspberry Pi 5)
+# ARDUINO PIN CONFIGURATION
 # ===========================
-# Ultrasonic Sensor
-TRIG_FRONT = 16
-ECHO_FRONT = 26
 
-# IR Line Sensors
+# Ultrasonic Sensors (4 on Arduino)
+SR04_FRONT_TRIG = 12
+SR04_FRONT_ECHO = 0  # A0
+SR04_LEFT_TRIG = 11
+SR04_LEFT_ECHO = 1  # A1
+SR04_RIGHT_TRIG = 2  # A2
+SR04_RIGHT_ECHO = 3  # A3
+SR04_BACK_TRIG = 4  # A4
+SR04_BACK_ECHO = 5  # A5
+
+# Left Motor (BTS7960 Driver)
+L_RPWM = 3    # PWM
+L_LPWM = 5    # PWM
+L_R_EN = 2    # Enable
+L_L_EN = 4    # Enable
+
+# Right Motor (BTS7960 Driver)
+R_RPWM = 9    # PWM
+R_LPWM = 10   # PWM
+R_R_EN = 7    # Enable
+R_L_EN = 8    # Enable
+
+# Relay
+RELAY_PIN = 13
+
+# ===========================
+# RASPBERRY PI GPIO SETTINGS
+# ===========================
+
+# IR Line Sensors (on Pi GPIO)
 IR_LEFT = 17
 IR_CENTER = 27
 IR_RIGHT = 22
-
-# Left Motor
-L_RPWM = 18
-L_LPWM = 23
-L_R_EN = 24
-L_L_EN = 25
-
-# Right Motor
-R_RPWM = 12
-R_LPWM = 13
-R_R_EN = 6
-R_L_EN = 5
-
-# Buzzer
-BUZZER = 19
 
 # ===========================
 # EMAIL SETTINGS (Optional)
@@ -109,6 +127,11 @@ LOG_MAX_BYTES = 5 * 1024 * 1024  # 5MB
 LOG_BACKUP_COUNT = 5
 
 # ===========================
+# DISPLAY SETTINGS
+# ===========================
+SHOW_OUTPUT = True  # Show video window
+
+# ===========================
 # SYSTEM SETTINGS
 # ===========================
 MAX_RUNTIME = 3600  # seconds (0 = unlimited)
@@ -119,9 +142,8 @@ WATCHDOG_TIMEOUT = 30  # seconds
 # OPERATION MODES
 # ===========================
 OPERATION_MODES = {
-    "AUTO": "Autonomous line following with pigeon detection",
+    "AUTO": "Autonomous pigeon detection and tracking",
     "MANUAL": "Keyboard-controlled movement",
-    "CALIBRATION": "IR sensor calibration mode",
     "TEST": "Hardware testing mode"
 }
 DEFAULT_MODE = "AUTO"
@@ -143,3 +165,4 @@ if __name__ == "__main__":
     print(f"📝 Log: {LOG_FILE}")
     print(f"📷 Camera Type: {CAMERA_TYPE}")
     print(f"📷 Stream Proxy: {XIAOMI_CAMERA_IP}:{XIAOMI_CAMERA_PORT}")
+    print(f"🔧 Arduino Port: {ARDUINO_PORT}:{ARDUINO_BAUD}")
