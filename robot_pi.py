@@ -47,6 +47,16 @@ class RobotController:
         # Detection parameters
         self.confidence_threshold = config.CONFIDENCE_THRESHOLD
         self.detection_class = 14  # COCO class 14 = bird
+        self.detection_frame_skip = max(1, int(getattr(config, "DETECTION_FRAME_SKIP", 2)))
+        self.last_detections = []
+        
+        # Alarm/relay state (non-blocking)
+        self.relay_active = False
+        self.alarm_until = 0.0
+        self.pigeon_alert_cooldown = float(getattr(config, "PIGEON_ALERT_COOLDOWN", 1.0))
+        self.pigeon_alarm_duration = float(getattr(config, "PIGEON_ALARM_DURATION", 0.25))
+        self.obstacle_alarm_duration = float(getattr(config, "OBSTACLE_ALARM_DURATION", 0.5))
+        self.last_pigeon_alert_time = 0.0
         
         logger.info("🤖 Initializing Robot...")
     
@@ -167,6 +177,21 @@ class RobotController:
             logger.error(f"Obstacle check error: {e}")
             return False
     
+    def trigger_alarm(self, duration: float):
+        """Trigger relay alarm for a duration (non-blocking)"""
+        self.alarm_until = max(self.alarm_until, time.time() + max(0.0, duration))
+    
+    def update_alarm(self):
+        """Update relay based on active alarm window"""
+        should_be_active = time.time() < self.alarm_until
+        
+        if should_be_active and not self.relay_active:
+            self.arduino.relay_on()
+            self.relay_active = True
+        elif not should_be_active and self.relay_active:
+            self.arduino.relay_off()
+            self.relay_active = False
+    
     def draw_detections(self, frame, detections) -> np.ndarray:
         """Draw detection boxes on frame"""
         for detection in detections:
@@ -240,17 +265,27 @@ class RobotController:
                 
                 self.stats['frame_count'] += 1
                 
-                # Detect pigeons
-                detections = self.detect_pigeons(frame)
+                # Detect pigeons (run YOLO every N frames to improve FPS)
+                if self.stats['frame_count'] % self.detection_frame_skip == 0:
+                    detections = self.detect_pigeons(frame)
+                    self.last_detections = detections
+                else:
+                    detections = self.last_detections
                 
                 if detections:
                     logger.info(f"🕊️  Detected {len(detections)} pigeon(s)")
+                    
+                    # Trigger short buzzer/relay pulse on pigeon detection (rate-limited)
+                    now = time.time()
+                    if now - self.last_pigeon_alert_time >= self.pigeon_alert_cooldown:
+                        self.trigger_alarm(self.pigeon_alarm_duration)
+                        self.last_pigeon_alert_time = now
                     
                     # Check for obstacles
                     if self.check_obstacles():
                         logger.warning("Obstacle detected, stopping")
                         self.arduino.stop()
-                        self.arduino.relay_on()  # Activate alarm
+                        self.trigger_alarm(self.obstacle_alarm_duration)
                     
                     else:
                         # Move towards pigeon
@@ -260,6 +295,9 @@ class RobotController:
                 else:
                     # No pigeon detected, stop
                     self.arduino.stop()
+                
+                # Keep relay state updated without blocking loop
+                self.update_alarm()
                 
                 # Draw on frame
                 frame = self.draw_detections(frame, detections)
