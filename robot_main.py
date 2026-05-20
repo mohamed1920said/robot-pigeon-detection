@@ -16,7 +16,11 @@ from dataclasses import dataclass, field
 
 try:
     import cv2
-    import RPi.GPIO as GPIO
+    # Use Pi 5 compatible GPIO wrapper instead of RPi.GPIO
+    try:
+        from gpio_pi5 import GPIO
+    except ImportError:
+        import RPi.GPIO as GPIO
     from ultralytics import YOLO
     import smtplib
     from email.mime.text import MIMEText
@@ -124,7 +128,6 @@ class PigeonDetectionRobot:
         """Setup GPIO pins safely"""
         try:
             GPIO.setmode(GPIO.BCM)
-            GPIO.setwarnings(False)
             
             # IR Sensors
             GPIO.setup([config.IR_LEFT, config.IR_CENTER, config.IR_RIGHT], GPIO.IN)
@@ -157,7 +160,7 @@ class PigeonDetectionRobot:
                 pwm.start(0)
             
             time.sleep(1)
-            self.logger.info("GPIO setup successful")
+            self.logger.info("✅ GPIO setup successful")
             return True
             
         except Exception as e:
@@ -168,16 +171,26 @@ class PigeonDetectionRobot:
         """Load YOLO model safely"""
         try:
             self.model = YOLO(config.MODEL_PATH, task="detect")
-            self.logger.info(f"Model loaded: {config.MODEL_PATH}")
+            self.logger.info(f"✅ Model loaded: {config.MODEL_PATH}")
             return True
         except Exception as e:
             self.logger.error(f"Failed to load model: {e}")
             return False
     
     def open_camera(self) -> bool:
-        """Open camera safely"""
+        """Open camera - supports both DroidCam and local"""
         try:
-            self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+            # Try DroidCam first if configured
+            if config.CAMERA_TYPE == "droidcam":
+                self.logger.info(f"Attempting to connect to DroidCam: {config.DROIDCAM_URL}")
+                self.cap = cv2.VideoCapture(config.DROIDCAM_URL)
+                
+                if not self.cap.isOpened():
+                    self.logger.warning("DroidCam failed, falling back to local camera")
+                    self.cap = cv2.VideoCapture(0)
+            else:
+                # Use local camera (CSI or USB)
+                self.cap = cv2.VideoCapture(config.CAMERA_INDEX, cv2.CAP_V4L2)
             
             if not self.cap.isOpened():
                 self.logger.error("Camera failed to open")
@@ -187,7 +200,7 @@ class PigeonDetectionRobot:
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
             self.cap.set(cv2.CAP_PROP_FPS, config.CAMERA_FPS)
             
-            self.logger.info("Camera opened successfully")
+            self.logger.info("✅ Camera opened successfully")
             return True
             
         except Exception as e:
@@ -361,7 +374,7 @@ Robot Status:
             self.last_alert_times[alert_type] = time.time()
             self.stats.emails_sent += 1
             
-            self.logger.info(f"Email sent: {subject}")
+            self.logger.info(f"✅ Email sent: {subject}")
             return True
             
         except Exception as e:
@@ -379,8 +392,8 @@ Robot Status:
         
         # Check for obstacles
         distance = self.measure_distance()
-        if distance < config.OBSTACLE_DISTANCE_THRESHOLD:
-            self.logger.warning(f"Obstacle detected at {distance:.1f}cm")
+        if distance < config.OBSTACLE_THRESHOLD:
+            self.logger.warning(f"🚨 Obstacle detected at {distance:.1f}cm")
             self.stop_motors()
             self.beep(2)
             self.stats.obstacles_detected += 1
@@ -396,7 +409,7 @@ Robot Status:
         
         # Check for line loss
         if (left, center, right) == (0, 0, 0):
-            self.logger.warning("Line lost!")
+            self.logger.warning("⚠️ Line lost!")
             self.stop_motors()
             self.beep(3)
             self.stats.line_losses += 1
@@ -456,9 +469,10 @@ Robot Status:
             )
             
             # Display results
-            annotated_frame = results[0].plot()
-            cv2.imshow("ROBOT CAMERA", annotated_frame)
-            cv2.waitKey(1)
+            if config.SHOW_OUTPUT:
+                annotated_frame = results[0].plot()
+                cv2.imshow("ROBOT CAMERA", annotated_frame)
+                cv2.waitKey(1)
             
             # Check for detections
             detections = len(results[0].boxes) > 0
@@ -468,7 +482,7 @@ Robot Status:
                 confidences = results[0].boxes.conf.cpu().numpy()
                 avg_confidence = float(confidences.mean()) if len(confidences) > 0 else 0
                 
-                self.logger.info(f"Pigeons detected! Average confidence: {avg_confidence:.2f}")
+                self.logger.info(f"🕊️ Pigeons detected! ({len(results[0].boxes)} objects, {avg_confidence:.2%} confidence)")
                 self.stats.pigeons_detected += 1
                 
                 self.send_email(
@@ -492,9 +506,9 @@ Robot Status:
         start_time = time.time()
         
         try:
-            self.logger.info("=" * 50)
-            self.logger.info("ROBOT STARTED")
-            self.logger.info("=" * 50)
+            self.logger.info("=" * 60)
+            self.logger.info("🤖 ROBOT STARTED - Pigeon Detection Active")
+            self.logger.info("=" * 60)
             
             while self.running:
                 # Check max runtime
@@ -506,7 +520,7 @@ Robot Status:
                 try:
                     # MOVEMENT PHASE
                     self.robot_mode = "MOVEMENT"
-                    self.logger.debug("Movement phase started")
+                    self.logger.debug("🚀 Movement phase started")
                     
                     move_start = time.time()
                     while time.time() - move_start < config.MOVEMENT_TIME and self.running:
@@ -517,7 +531,7 @@ Robot Status:
                     
                     # STOP PHASE (Pigeon detection)
                     self.robot_mode = "STOP"
-                    self.logger.debug("Stop phase started")
+                    self.logger.debug("🎯 Stop phase started - scanning for pigeons")
                     
                     stop_start = time.time()
                     while time.time() - stop_start < config.STOP_TIME and self.running:
@@ -530,7 +544,7 @@ Robot Status:
                     time.sleep(0.5)
             
         except KeyboardInterrupt:
-            self.logger.info("Keyboard interrupt received")
+            self.logger.info("⏹️ Keyboard interrupt received")
         except Exception as e:
             self.logger.error(f"Fatal error: {e}")
         finally:
@@ -538,7 +552,7 @@ Robot Status:
     
     def cleanup(self) -> None:
         """Cleanup and shutdown safely"""
-        self.logger.info("Cleanup started")
+        self.logger.info("🧹 Cleanup started")
         self.running = False
         
         try:
@@ -557,9 +571,9 @@ Robot Status:
             # Final statistics
             self.logger.info(self.stats.get_summary())
             
-            self.logger.info("=" * 50)
-            self.logger.info("ROBOT STOPPED")
-            self.logger.info("=" * 50)
+            self.logger.info("=" * 60)
+            self.logger.info("🛑 ROBOT STOPPED")
+            self.logger.info("=" * 60)
             
         except Exception as e:
             self.logger.error(f"Cleanup error: {e}")
