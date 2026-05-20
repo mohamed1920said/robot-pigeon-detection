@@ -1,443 +1,322 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Clean Pigeon Detection Robot for Raspberry Pi 5
-Production-ready with graceful GPIO fallback
-Updated with Camera Handler support
+Robot Pigeon Detection - Main Control with Arduino Integration
+Detects pigeons and controls robot via Arduino Uno
 """
 
-import time
+import cv2
 import logging
-import signal
-import sys
-from logging.handlers import RotatingFileHandler
+import time
+import threading
+from pathlib import Path
 from datetime import datetime
-from dataclasses import dataclass
 
-try:
-    import cv2
-    from ultralytics import YOLO
-    import smtplib
-    from email.mime.text import MIMEText
-    from email.mime.multipart import MIMEMultipart
-except ImportError as e:
-    print(f"Import Error: {e}")
-    print("Install dependencies with: pip install -r requirements-pi.txt")
-    sys.exit(1)
-
-# Try GPIO - graceful fallback for Pi 5
-try:
-    import RPi.GPIO as GPIO
-    GPIO_AVAILABLE = True
-except (ImportError, RuntimeError):
-    GPIO_AVAILABLE = False
-    print("⚠️  GPIO not available (normal on Pi 5 without proper setup)")
+import numpy as np
+from ultralytics import YOLO
 
 import config
 from camera_handler import CameraHandler
+from arduino_interface import ArduinoInterface
 
-# ===========================
-# LOGGER SETUP
-# ===========================
-def setup_logger(name: str) -> logging.Logger:
-    """Setup logger with file rotation"""
-    import os
-    from pathlib import Path
-    
-    # Create log directory
-    log_dir = Path(config.LOG_FILE).parent
-    log_dir.mkdir(parents=True, exist_ok=True)
-    
-    logger = logging.getLogger(name)
-    logger.setLevel(getattr(logging, config.LOG_LEVEL))
-    
-    # File handler
-    file_handler = RotatingFileHandler(
-        config.LOG_FILE,
-        maxBytes=config.LOG_MAX_BYTES,
-        backupCount=config.LOG_BACKUP_COUNT
-    )
-    
-    # Console handler
-    console_handler = logging.StreamHandler()
-    
-    # Formatter
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    
-    file_handler.setFormatter(formatter)
-    console_handler.setFormatter(formatter)
-    
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
-    
-    return logger
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-logger = setup_logger(__name__)
 
-# ===========================
-# STATISTICS
-# ===========================
-@dataclass
-class RobotStats:
-    """Track robot statistics"""
-    start_time: datetime = None
-    frames_processed: int = 0
-    pigeons_detected: int = 0
-    obstacles_detected: int = 0
-    errors: int = 0
-    camera_type: str = "unknown"
-    
-    def __post_init__(self):
-        if self.start_time is None:
-            self.start_time = datetime.now()
-    
-    def runtime(self) -> int:
-        """Get runtime in seconds"""
-        return int((datetime.now() - self.start_time).total_seconds())
-    
-    def summary(self) -> str:
-        """Get statistics summary"""
-        return f"""
-Robot Statistics:
-- Runtime: {self.runtime()}s
-- Camera: {self.camera_type}
-- Frames: {self.frames_processed}
-- Pigeons Detected: {self.pigeons_detected}
-- Obstacles: {self.obstacles_detected}
-- Errors: {self.errors}
-        """
-
-# ===========================
-# ROBOT CLASS
-# ===========================
-class Robot:
-    """Main robot control class"""
+class RobotController:
+    """Main robot control system with Arduino integration"""
     
     def __init__(self):
-        self.logger = logger
-        self.stats = RobotStats()
-        self.running = False
+        """Initialize robot"""
+        self.camera = None
+        self.arduino = None
         self.model = None
-        self.camera_handler = None
-        self.pwm_motors = {}
-        self.gpio_enabled = False
+        self.running = False
         
-        self.logger.info("Robot initialized")
+        # Stats
+        self.stats = {
+            'detections': 0,
+            'distance': 0,
+            'frame_count': 0,
+            'start_time': time.time()
+        }
+        
+        # Detection parameters
+        self.confidence_threshold = config.CONFIDENCE_THRESHOLD
+        self.detection_class = 14  # COCO class 14 = bird
+        
+        logger.info("🤖 Initializing Robot...")
     
     def setup(self) -> bool:
-        """Setup all hardware and model"""
+        """Setup all systems"""
         try:
-            # GPIO setup (optional)
-            if GPIO_AVAILABLE:
-                if not self._setup_gpio():
-                    self.logger.warning("GPIO setup skipped, continuing in simulation mode")
-            else:
-                self.logger.warning("GPIO not available, running in simulation mode")
+            # Load model
+            logger.info(f"Loading YOLO model: {config.MODEL_PATH}")
+            self.model = YOLO(config.MODEL_PATH)
+            logger.info(f"✅ Model loaded: {config.MODEL_PATH}")
             
-            # Model loading (required)
-            if not self._load_model():
-                return False
+            # Setup camera
+            self.camera = CameraHandler(config.CAMERA_TYPE)
+            if not self.camera.connect():
+                logger.warning("⚠️  Camera setup failed")
             
-            # Camera setup (optional)
-            if not self._setup_camera():
-                self.logger.warning("Camera not available, running detection on static images")
-            
-            self.logger.info("All systems ready")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Setup failed: {e}")
-            return False
-    
-    def _setup_gpio(self) -> bool:
-        """Setup GPIO pins"""
-        try:
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setwarnings(False)
-            
-            # IR Sensors
-            GPIO.setup([config.IR_LEFT, config.IR_CENTER, config.IR_RIGHT], GPIO.IN)
-            
-            # Motor pins
-            motor_pins = [
-                config.L_RPWM, config.L_LPWM, config.L_R_EN, config.L_L_EN,
-                config.R_RPWM, config.R_LPWM, config.R_R_EN, config.R_L_EN
-            ]
-            GPIO.setup(motor_pins, GPIO.OUT)
-            GPIO.output([config.L_R_EN, config.L_L_EN, config.R_R_EN, config.R_L_EN], GPIO.HIGH)
-            
-            # Ultrasonic
-            GPIO.setup(config.TRIG_FRONT, GPIO.OUT)
-            GPIO.setup(config.ECHO_FRONT, GPIO.IN)
-            GPIO.output(config.TRIG_FRONT, False)
-            
-            # Buzzer
-            GPIO.setup(config.BUZZER, GPIO.OUT)
-            
-            # PWM setup
-            self.pwm_motors = {
-                'L_R': GPIO.PWM(config.L_RPWM, 1000),
-                'L_L': GPIO.PWM(config.L_LPWM, 1000),
-                'R_R': GPIO.PWM(config.R_RPWM, 1000),
-                'R_L': GPIO.PWM(config.R_LPWM, 1000),
-            }
-            
-            for pwm in self.pwm_motors.values():
-                pwm.start(0)
-            
-            self.gpio_enabled = True
-            self.logger.info("GPIO setup complete")
-            return True
-            
-        except Exception as e:
-            self.logger.warning(f"GPIO setup failed (simulation mode): {e}")
-            return False
-    
-    def _load_model(self) -> bool:
-        """Load YOLO model"""
-        try:
-            self.model = YOLO(config.MODEL_PATH, task="detect")
-            self.logger.info(f"✅ Model loaded: {config.MODEL_PATH}")
-            return True
-        except Exception as e:
-            self.logger.error(f"❌ Model loading failed: {e}")
-            return False
-    
-    def _setup_camera(self) -> bool:
-        """Setup camera using CameraHandler"""
-        try:
-            self.logger.info(f"Setting up camera: {config.CAMERA_TYPE}")
-            
-            self.camera_handler = CameraHandler()
-            
-            if self.camera_handler.connect():
-                self.stats.camera_type = config.CAMERA_TYPE
-                self.logger.info(f"✅ Camera ready: {config.CAMERA_TYPE}")
-                return True
-            else:
-                self.logger.warning("⚠️  Camera setup failed, will run in image mode")
-                return False
-            
-        except Exception as e:
-            self.logger.warning(f"⚠️  Camera setup failed: {e}")
-            return False
-    
-    def read_sensors(self):
-        """Read line sensors"""
-        if not self.gpio_enabled:
-            return (0, 0, 0)  # Simulate no line detected
-        
-        try:
-            left = GPIO.input(config.IR_LEFT)
-            center = GPIO.input(config.IR_CENTER)
-            right = GPIO.input(config.IR_RIGHT)
-            return (left, center, right)
-        except Exception as e:
-            self.logger.error(f"Sensor read error: {e}")
-            self.stats.errors += 1
-            return (0, 0, 0)
-    
-    def measure_distance(self) -> float:
-        """Measure distance"""
-        if not self.gpio_enabled:
-            return 999  # Simulate no obstacle
-        
-        try:
-            GPIO.output(config.TRIG_FRONT, True)
-            time.sleep(0.00001)
-            GPIO.output(config.TRIG_FRONT, False)
-            
-            start = time.time()
-            timeout = start + config.ULTRASONIC_TIMEOUT
-            
-            while GPIO.input(config.ECHO_FRONT) == 0 and time.time() < timeout:
-                start = time.time()
-            
-            while GPIO.input(config.ECHO_FRONT) == 1 and time.time() < timeout:
-                end = time.time()
-            
-            distance = (end - start) * 34300 / 2
-            return min(distance, 400)
-            
-        except Exception as e:
-            self.logger.error(f"Distance measurement error: {e}")
-            return 999
-    
-    def set_motors(self, left: int, right: int):
-        """Set motor speeds (-100 to 100)"""
-        if not self.gpio_enabled:
-            return  # Simulation mode
-        
-        try:
-            left = max(-100, min(100, left))
-            right = max(-100, min(100, right))
-            
-            # Left motor
-            if left >= 0:
-                self.pwm_motors['L_R'].ChangeDutyCycle(left)
-                self.pwm_motors['L_L'].ChangeDutyCycle(0)
-            else:
-                self.pwm_motors['L_R'].ChangeDutyCycle(0)
-                self.pwm_motors['L_L'].ChangeDutyCycle(-left)
-            
-            # Right motor
-            if right >= 0:
-                self.pwm_motors['R_R'].ChangeDutyCycle(right)
-                self.pwm_motors['R_L'].ChangeDutyCycle(0)
-            else:
-                self.pwm_motors['R_R'].ChangeDutyCycle(0)
-                self.pwm_motors['R_L'].ChangeDutyCycle(-right)
-                
-        except Exception as e:
-            self.logger.error(f"Motor control error: {e}")
-            self.stats.errors += 1
-    
-    def stop(self):
-        """Stop motors"""
-        self.set_motors(0, 0)
-    
-    def beep(self):
-        """Buzzer beep"""
-        if not self.gpio_enabled:
-            return
-        
-        try:
-            GPIO.output(config.BUZZER, GPIO.HIGH)
-            time.sleep(0.2)
-            GPIO.output(config.BUZZER, GPIO.LOW)
-        except Exception as e:
-            self.logger.error(f"Buzzer error: {e}")
-    
-    def follow_line(self):
-        """Follow line logic"""
-        # Check obstacle
-        distance = self.measure_distance()
-        if distance < config.OBSTACLE_DISTANCE_THRESHOLD:
-            self.logger.warning(f"Obstacle at {distance:.1f}cm")
-            self.stop()
-            self.beep()
-            self.stats.obstacles_detected += 1
-            return
-        
-        # Read sensors
-        left, center, right = self.read_sensors()
-        
-        # Line following
-        if center == 1:
-            self.set_motors(config.BASE_SPEED, config.BASE_SPEED)
-        elif left == 1:
-            self.set_motors(-config.BASE_SPEED // 2, config.BASE_SPEED)
-        elif right == 1:
-            self.set_motors(config.BASE_SPEED, -config.BASE_SPEED // 2)
-        else:
-            self.stop()
-    
-    def detect_pigeons(self):
-        """Detect pigeons"""
-        if not self.camera_handler:
-            return False
-        
-        try:
-            ret, frame = self.camera_handler.read()
-            if not ret or frame is None:
-                return False
-            
-            self.stats.frames_processed += 1
-            
-            # Run detection
-            results = self.model.predict(
-                frame,
-                imgsz=config.IMAGE_SIZE,
-                conf=config.CONFIDENCE_THRESHOLD,
-                verbose=False
+            # Setup Arduino
+            logger.info(f"Connecting to Arduino on {config.ARDUINO_PORT}...")
+            self.arduino = ArduinoInterface(
+                port=config.ARDUINO_PORT,
+                baud=config.ARDUINO_BAUD
             )
             
-            num_detections = len(results[0].boxes)
-            if num_detections > 0:
-                self.stats.pigeons_detected += 1
-                confidences = results[0].boxes.conf.cpu().numpy()
-                avg_confidence = float(confidences.mean())
-                self.logger.info(f"🕊️  Pigeons detected: {num_detections}, confidence: {avg_confidence:.1%}")
+            if not self.arduino.connect():
+                logger.error("❌ Arduino connection failed")
+                return False
+            
+            logger.info("✅ Arduino connected")
+            
+            time.sleep(1)
+            logger.info("✅ All systems ready")
+            return True
+        
+        except Exception as e:
+            logger.error(f"Setup failed: {e}")
+            return False
+    
+    def detect_pigeons(self, frame) -> list:
+        """Detect pigeons in frame"""
+        try:
+            results = self.model(frame, conf=self.confidence_threshold)
+            detections = []
+            
+            for result in results:
+                for box in result.boxes:
+                    conf = float(box.conf[0])
+                    
+                    if conf >= self.confidence_threshold:
+                        x1, y1, x2, y2 = box.xyxy[0]
+                        
+                        detection = {
+                            'x1': int(x1),
+                            'y1': int(y1),
+                            'x2': int(x2),
+                            'y2': int(y2),
+                            'conf': conf,
+                            'center_x': int((x1 + x2) / 2),
+                            'center_y': int((y1 + y2) / 2)
+                        }
+                        
+                        detections.append(detection)
+            
+            if detections:
+                self.stats['detections'] += len(detections)
+            
+            return detections
+        
+        except Exception as e:
+            logger.error(f"Detection error: {e}")
+            return []
+    
+    def move_towards_pigeon(self, detection, frame_width: int):
+        """Move robot towards detected pigeon"""
+        try:
+            center_x = detection['center_x']
+            
+            # Frame center
+            frame_center = frame_width / 2
+            
+            # Calculate error
+            error = center_x - frame_center
+            
+            # Threshold for straight movement
+            threshold = 50
+            
+            if abs(error) < threshold:
+                # Move forward
+                logger.info("→ Moving forward")
+                self.arduino.move_forward(config.BASE_SPEED, config.BASE_SPEED)
+            
+            elif error > 0:
+                # Pigeon on right, turn right
+                logger.info("↪️  Turning right")
+                self.arduino.turn_right(config.BASE_SPEED)
+            
+            else:
+                # Pigeon on left, turn left
+                logger.info("↪️  Turning left")
+                self.arduino.turn_left(config.BASE_SPEED)
+        
+        except Exception as e:
+            logger.error(f"Movement error: {e}")
+    
+    def check_obstacles(self) -> bool:
+        """Check for obstacles using ultrasonic sensors"""
+        try:
+            front_distance = self.arduino.get_distance('front')
+            
+            self.stats['distance'] = front_distance
+            
+            if front_distance > 0 and front_distance < config.OBSTACLE_THRESHOLD:
+                logger.warning(f"⚠️  Obstacle detected: {front_distance:.2f}cm")
                 return True
             
             return False
-            
+        
         except Exception as e:
-            self.logger.error(f"Detection error: {e}")
-            self.stats.errors += 1
+            logger.error(f"Obstacle check error: {e}")
             return False
+    
+    def draw_detections(self, frame, detections) -> np.ndarray:
+        """Draw detection boxes on frame"""
+        for detection in detections:
+            x1, y1, x2, y2 = detection['x1'], detection['y1'], detection['x2'], detection['y2']
+            conf = detection['conf']
+            
+            # Draw box
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            
+            # Draw label
+            label = f"Pigeon {conf:.2f}"
+            cv2.putText(frame, label, (x1, y1 - 10),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            
+            # Draw center point
+            center_x = detection['center_x']
+            center_y = detection['center_y']
+            cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
+        
+        return frame
+    
+    def draw_stats(self, frame) -> np.ndarray:
+        """Draw statistics on frame"""
+        h, w = frame.shape[:2]
+        
+        stats_text = [
+            f"Detections: {self.stats['detections']}",
+            f"Distance: {self.stats['distance']:.2f}cm",
+            f"FPS: {self.get_fps():.1f}",
+            f"Time: {self.get_runtime():.0f}s"
+        ]
+        
+        y_offset = 30
+        for text in stats_text:
+            cv2.putText(frame, text, (10, y_offset),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            y_offset += 30
+        
+        return frame
+    
+    def get_fps(self) -> float:
+        """Calculate FPS"""
+        elapsed = time.time() - self.stats['start_time']
+        if elapsed > 0:
+            return self.stats['frame_count'] / elapsed
+        return 0
+    
+    def get_runtime(self) -> float:
+        """Get runtime in seconds"""
+        return time.time() - self.stats['start_time']
     
     def run(self):
         """Main robot loop"""
+        if not self.setup():
+            logger.error("Setup failed, exiting")
+            return
+        
         self.running = True
-        self.logger.info("🤖 Robot started")
         
         try:
+            logger.info("🚀 Robot started")
+            
             while self.running:
-                # Follow line
-                self.follow_line()
+                # Read frame
+                ret, frame = self.camera.read()
+                
+                if not ret or frame is None:
+                    logger.warning("Failed to read frame")
+                    time.sleep(1)
+                    continue
+                
+                self.stats['frame_count'] += 1
                 
                 # Detect pigeons
-                self.detect_pigeons()
+                detections = self.detect_pigeons(frame)
                 
-                time.sleep(0.01)
+                if detections:
+                    logger.info(f"🕊️  Detected {len(detections)} pigeon(s)")
+                    
+                    # Check for obstacles
+                    if self.check_obstacles():
+                        logger.warning("Obstacle detected, stopping")
+                        self.arduino.stop()
+                        self.arduino.relay_on()  # Activate alarm
+                    
+                    else:
+                        # Move towards pigeon
+                        best_detection = max(detections, key=lambda x: x['conf'])
+                        self.move_towards_pigeon(best_detection, frame.shape[1])
                 
+                else:
+                    # No pigeon detected, stop
+                    self.arduino.stop()
+                
+                # Draw on frame
+                frame = self.draw_detections(frame, detections)
+                frame = self.draw_stats(frame)
+                
+                # Display
+                if config.SHOW_OUTPUT:
+                    cv2.imshow("Robot Vision", frame)
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
+                
+                # Log stats periodically
+                if self.stats['frame_count'] % 30 == 0:
+                    logger.info(f"Frame {self.stats['frame_count']} | "
+                               f"Detections: {self.stats['detections']} | "
+                               f"FPS: {self.get_fps():.1f}")
+        
         except KeyboardInterrupt:
-            self.logger.info("Interrupted by user")
+            logger.info("🛑 Interrupted by user")
+        
         except Exception as e:
-            self.logger.error(f"Runtime error: {e}")
-            self.stats.errors += 1
+            logger.error(f"Runtime error: {e}")
+        
         finally:
             self.cleanup()
     
     def cleanup(self):
-        """Cleanup"""
-        self.logger.info("Cleaning up...")
+        """Cleanup resources"""
+        logger.info("Cleaning up...")
         
         try:
-            self.stop()
+            self.running = False
             
-            if self.camera_handler:
-                self.camera_handler.release()
+            if self.arduino:
+                self.arduino.stop()
+                self.arduino.relay_off()
+                self.arduino.disconnect()
             
-            for pwm in self.pwm_motors.values():
-                pwm.stop()
+            if self.camera:
+                self.camera.release()
             
-            if self.gpio_enabled:
-                GPIO.cleanup()
+            cv2.destroyAllWindows()
             
-            self.logger.info(self.stats.summary())
-            
+            logger.info(f"✅ Total detections: {self.stats['detections']}")
+            logger.info(f"✅ Total runtime: {self.get_runtime():.0f}s")
+            logger.info(f"✅ Average FPS: {self.get_fps():.1f}")
+            logger.info("Cleanup complete")
+        
         except Exception as e:
-            self.logger.error(f"Cleanup error: {e}")
+            logger.error(f"Cleanup error: {e}")
 
-# ===========================
-# MAIN
-# ===========================
+
 def main():
     """Main entry point"""
-    robot = Robot()
-    
-    # Signal handlers
-    def signal_handler(sig, frame):
-        robot.running = False
-    
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
-    # Setup
-    if not robot.setup():
-        logger.error("❌ Setup failed - model not available")
-        return False
-    
-    # Run
+    robot = RobotController()
     robot.run()
-    
-    return True
+
 
 if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)
+    main()
