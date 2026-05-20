@@ -39,7 +39,7 @@ XIAOMI_CAMERA_TIMEOUT = 5  # seconds
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 CAMERA_FPS = 30
-CAMERA_INDEX = 19  # Pi 5 uses higher indices (try 19-35 if not working)
+CAMERA_INDEX = 0  # Pi CSI camera (change to 19+ if USB camera)
 
 # ===========================
 # ARDUINO SETTINGS
@@ -82,6 +82,10 @@ SR04_RIGHT_ECHO = 3  # A3
 SR04_BACK_TRIG = 4  # A4
 SR04_BACK_ECHO = 5  # A5
 
+# Aliases for backward compatibility with test_hardware.py
+TRIG_FRONT = SR04_FRONT_TRIG
+ECHO_FRONT = SR04_FRONT_ECHO
+
 # Left Motor (BTS7960 Driver)
 L_RPWM = 3    # PWM
 L_LPWM = 5    # PWM
@@ -105,6 +109,9 @@ RELAY_PIN = 13
 IR_LEFT = 17
 IR_CENTER = 27
 IR_RIGHT = 22
+
+# Buzzer (Pi GPIO)
+BUZZER = 26
 
 # ===========================
 # EMAIL SETTINGS (Optional)
