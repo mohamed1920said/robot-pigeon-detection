@@ -44,7 +44,7 @@ CAMERA_INDEX = 19  # Pi 5 uses higher indices (try 19-35 if not working)
 # ===========================
 # ARDUINO SETTINGS
 # ===========================
-ARDUINO_PORT = "/dev/ttyUSB0"  # Linux/Mac: /dev/ttyUSB0, Windows: COM3
+ARDUINO_PORT = "/dev/ttyACM1"  # ✅ Arduino Uno detected on this port
 ARDUINO_BAUD = 115200
 
 # ===========================
