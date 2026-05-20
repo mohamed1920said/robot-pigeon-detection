@@ -47,8 +47,13 @@ class RobotController:
         # Detection parameters
         self.confidence_threshold = config.CONFIDENCE_THRESHOLD
         self.detection_class = 14  # COCO class 14 = bird
-        self.detection_frame_skip = max(1, int(getattr(config, "DETECTION_FRAME_SKIP", 2)))
-        self.last_detections = []
+        detection_interval = getattr(
+            config,
+            "DETECTION_FRAME_INTERVAL",
+            getattr(config, "DETECTION_FRAME_SKIP", 2)
+        )
+        self.detection_every_n_frames = max(1, int(detection_interval))
+        self.last_detections = None
         
         # Alarm/relay state (non-blocking)
         self.relay_active = False
@@ -179,7 +184,10 @@ class RobotController:
     
     def trigger_alarm(self, duration: float):
         """Trigger relay alarm for a duration (non-blocking)"""
-        self.alarm_until = max(self.alarm_until, time.time() + max(0.0, duration))
+        if duration <= 0:
+            return
+        new_alarm_until = time.time() + duration
+        self.alarm_until = max(self.alarm_until, new_alarm_until)
     
     def update_alarm(self):
         """Update relay based on active alarm window"""
@@ -266,7 +274,11 @@ class RobotController:
                 self.stats['frame_count'] += 1
                 
                 # Detect pigeons (run YOLO every N frames to improve FPS)
-                if self.stats['frame_count'] % self.detection_frame_skip == 0:
+                should_run_detection = (
+                    self.last_detections is None
+                    or self.stats['frame_count'] % self.detection_every_n_frames == 0
+                )
+                if should_run_detection:
                     detections = self.detect_pigeons(frame)
                     self.last_detections = detections
                 else:
