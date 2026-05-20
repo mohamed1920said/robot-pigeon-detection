@@ -28,14 +28,18 @@ MIN_DETECTION_COOLDOWN = 30  # seconds between alerts
 # ===========================
 # CAMERA SETTINGS
 # ===========================
-CAMERA_TYPE = "xiaomi_http"  # Options: "xiaomi_http", "xiaomi_rtsp", "usb", "local", "test"
+CAMERA_TYPE = "droidcam"  # Options: "xiaomi_http", "xiaomi_rtsp", "droidcam", "usb", "local", "test"
 
-# Use localhost proxy for iPhone streaming
-XIAOMI_CAMERA_IP = "127.0.0.1"  # Localhost proxy
-XIAOMI_CAMERA_PORT = 8888  # Proxy MJPEG server port
-XIAOMI_CAMERA_TIMEOUT = 5  # seconds
+# DroidCam iPhone Settings
+DROIDCAM_IP = "192.168.1.47"
+DROIDCAM_PORT = 4747
+DROIDCAM_TIMEOUT = 5  # seconds
 
-# Local Camera Settings
+# Camera URL for DroidCam
+# MJPEG: http://192.168.1.47:4747/mjpegfeed?type=base64
+DROIDCAM_URL = f"http://{DROIDCAM_IP}:{DROIDCAM_PORT}/mjpegfeed?type=base64"
+
+# Local Camera Settings (backup)
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 CAMERA_FPS = 30
@@ -171,5 +175,6 @@ if __name__ == "__main__":
     print(f"📦 Model: {MODEL_PATH}")
     print(f"📝 Log: {LOG_FILE}")
     print(f"📷 Camera Type: {CAMERA_TYPE}")
-    print(f"📷 Stream Proxy: {XIAOMI_CAMERA_IP}:{XIAOMI_CAMERA_PORT}")
+    print(f"📷 DroidCam IP: {DROIDCAM_IP}:{DROIDCAM_PORT}")
+    print(f"📷 DroidCam URL: {DROIDCAM_URL}")
     print(f"🔧 Arduino Port: {ARDUINO_PORT}:{ARDUINO_BAUD}")
